@@ -1,185 +1,149 @@
 import time
+from datetime import datetime
 from multiprocessing import Pool
-from decimal import *
-import math
+import logging
+import logging.handlers
+import rsa.prime
 
-class SolverLSB:
-    
-    def __init__(self, logger):
-        self.logging = logger
-
-    def get_digit(number, n):
-        return number // 10 ** n % 10
+filename = "c:\\temp\\rsaLogs\\rsa"
 
 
-    def get_msb(self, key):
-        before_div = (10 ** math.floor(math.log10(key)))
-        msb = math.floor(key / before_div)
-        return msb
+def get_msb(key):
+    return int(str(key)[0])
 
-    def get_starting_coditions(self, key):
-        mod = key%10
-        if mod == 1:
-            return [ (9,9), (3, 7), (1, 1)]
-        if mod == 3:
-            return [(7, 9), (1, 3)]
-        if mod == 7:
-            return [(3, 9), (1, 7)]
-        if mod == 9:
-            return [(7, 7), (3, 3), (1, 9)]
 
-    def get_factors_pair(self, x):
-        nums = []
-        for i in range(1, x + 1):
-            if x % i == 0:
-                otherDivisor = x//i
-                nums.append((min(i, otherDivisor), max(i, otherDivisor)))
-        return nums
+def get_lsb(key):
+    return int(str(key)[-1])
 
-    def get_factors(self, key):
-        global counter
 
-        for f in self.get_starting_coditions(key):
-            counter = 0
-            print(f"Testing seed: {f}")
-            self.logging.info(f"Testing seed: {f}")
-            start = time.time()
-            res = self.get_factors_rec(key, f, 10, set())
-            end = time.time()
-            print(f"Time for {f}: {end-start}; calls: {counter}")
-            self.logging.info(f"Time for {f}: {end-start}; calls: {counter}")
+def get_digit(number, n):
+    return number // 10**n % 10
 
-            if res is not None:
-                return res
 
-    def process_chunk(self, args):
-        key, sub_factor, depth = args
-        bag = set()
+def log_setup():
+    # Create a logger
+    logger = logging.getLogger(__name__)
+    # Set the log level
+    logger.setLevel(logging.INFO)
+    # Create a rotating file handler
+    handler = logging.handlers.RotatingFileHandler(filename, backupCount=5)
+    # Set the formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    # Add the handler to the logger
+    logger.addHandler(handler)
+    return logger
 
+
+def get_starting_coditions(key):
+    mod = key % 10
+    if mod == 1:
+        return [(9, 9), (3, 7), (1, 1)]
+    if mod == 3:
+        return [(7, 9), (1, 3)]
+    if mod == 7:
+        return [(3, 9), (1, 7)]
+    if mod == 9:
+        return [(7, 7), (3, 3), (1, 9)]
+
+
+def get_factors_pair(x):
+    nums = []
+    for i in range(1, x + 1):
+        if x % i == 0:
+            other_divisor = x//i
+            nums.append((min(i, other_divisor), max(i, other_divisor)))
+    return nums
+
+
+def get_factors(key):
+    for f in get_starting_coditions(key):
+        print(f"Testing seed: {f}")
+        logging.info(f"Testing seed: {f}")
         start = time.time()
-        res = self.get_factors_rec(key, sub_factor, 10, set())
-        #res = get_factors_iterative(key, sub_factor, 10, set())
+        res = get_factors_rec(key, f, 10)
         end = time.time()
-        print(f"Time for {sub_factor}: {end - start}; calls: {counter}")
-        return res
-
-    def get_factors_mp(self, key, cores):
-
-        args_list = [(key, i, 2) for i in self.get_starting_coditions(key)]
-
-        #with Pool(cores) as pool:
-        #   results = pool.map(process_chunk, args_list)
-        with Pool(cores) as pool:
-            for i in pool.imap_unordered(self.process_chunk, args_list, chunksize=1):
-                if i is not None:
-                    print("terminate")
-                    pool.terminate()
-                    return i
+        print(f"Time for {f}: {end-start}")
+        logging.info(f"Time for {f}: {end-start}")
+        if res is not None:
+            return res
 
 
-    def get_factors_rec(self, key, sub_factor, depth, bag):
-        key_sqrt = key % 10**depth*2
-        key_sqrt = Decimal(key_sqrt).sqrt()
+def process_chunk(args):
+    key, sub_factor, depth = args
+    start = time.time()
+    res = get_factors_rec(key, sub_factor, 10)
+    end = time.time()
+    print(f"Time for {sub_factor}: {end - start}")
+    return res
 
-        self.logging.debug(f"sub_factor: {sub_factor}; depth: {depth}")
-        pkey = sub_factor[0] * sub_factor[1]
-        #if (pkey, depth) in bag:
-            #self.logging.debug(f"Bag contains: {(pkey, depth)}")
-            #return None
-        if pkey.bit_length() >= key.bit_length():
-            if sub_factor[0] == key or sub_factor[1] == key:
-                return None
-            if pkey == key:
-                return sub_factor
+
+def get_factors_mp(key, cores):
+    args_list = [(key, i, 2) for i in get_starting_coditions(key)]
+    with Pool(cores) as pool:
+        for i in pool.imap_unordered(process_chunk, args_list, chunksize=1):
+            if i is not None:
+                print("terminate")
+                pool.terminate()
+                return i
+
+
+def get_factors_rec(key, sub_factor, depth):
+
+    pkey = sub_factor[0] * sub_factor[1]
+
+    if pkey.bit_length() >= key.bit_length():
+        if sub_factor[0] == key or sub_factor[1] == key:
             return None
-        depth10 = depth*10
-        keyModDepth = key % depth10
-
-        if sub_factor[0] > sub_factor[1]:
-            sub_factor = (sub_factor[1], sub_factor[0])
-
-        for i in range(0, 10):
-            p = sub_factor[0] + i * depth
-            q = sub_factor[1]
+        if pkey == key:
+            return sub_factor
+        return None
+    depth10 = depth*10
+    key_mod_depth10 = key % depth10
+    routes = []
+    for i in range(0, 10):
+        p = sub_factor[0] + i * depth
+        q = sub_factor[1]
+        pq = p*q
+        if pq > key:
+            break
+        for j in range(0, 10):
+            q = sub_factor[1] + j * depth
             pq = p * q
-            if pq > key:
-                self.logging.debug(f"Breaking outer. pq greater than key. pq: {pq}; keyMod:{keyModDepth}")
-                break
-            for j in range(0, 10):
-                q = sub_factor[1] + j * depth
 
-                #test
-                m = min(p,q)
-                if m > key_sqrt:
-                    print(f"Exceeded sqrt {key_sqrt}. p: {p}; q: {q}")
-
-                pq = p * q
-
-                if pq > key:
-                    self.logging.debug(f"Breaking. pq greater than key. pq: {pq}; keyMod:{keyModDepth}")
-                    break
-                if pq % depth10 == keyModDepth:
-                    pqmsb = self.get_msb(pq)
-
-                    keyDigit = self.get_digit(math.log10(p) + math.log10(q)-1)
-                    if(pqmsb == keyDigit):
-                        print("IS this valid?")
-
-                    self.logging.debug(f"pq success:{pq}; keyMod:{keyModDepth}")
-                    res = self.get_factors_rec(key, (p, q), depth10, bag)
-                    if res is not None:
-                        return res
-                self.logging.debug(f"pq failure:{pq}; keyMod:{keyModDepth}")
-        #bag.add((pkey, depth))
+            if pq % depth10 == key_mod_depth10:
+                routes.append((p, q))
+    if len(routes) < 8:
         return None
+    srt = sorted(routes, key=lambda x: max(x[0], x[1]) - min(x[0], x[1]))
+
+    for r in srt:
+        res = get_factors_rec(key, r, depth10)
+        if res is not None:
+            return res
+    return None
 
 
-    def get_factors_iterative(self, key, sub_factor, depth, bag):
-        stack = [(key, sub_factor, depth)]
+# Press the green button in the gutter to run the script.
+if __name__ == '__main__':
+    dateTag = datetime.now().strftime("%Y-%b-%d_%H-%M-%S")
+    logging.basicConfig(filename=f"{filename}_%s.log" % dateTag, level=logging.DEBUG)
+    rsa_complexity = 22
+    p1 = rsa.prime.getprime(rsa_complexity)
+    p2 = rsa.prime.getprime(rsa_complexity)
 
-        while stack:
-            key, sub_factor, depth = stack.pop()
-            self.logging.debug(f"sub_factor: {sub_factor}; depth: {depth}")
+    logging.info(f"p1:{p1}")
+    logging.info(f"p1:{p2}")
+    print(f"p1:{p1}")
+    print(f"p2:{p2}")
+    key = p1 * p2
+    print(f"key: {key}")
+    logging.info(f"key: {key}")
 
-            pkey = sub_factor[0] * sub_factor[1]
-            if (pkey, depth) in bag:
-                continue
-
-            if pkey.bit_length() >= key.bit_length():
-                if sub_factor[0] == key or sub_factor[1] == key:
-                    continue
-                if pkey == key:
-                    return sub_factor
-                continue
-
-            depth10 = depth * 10
-            keyModDepth = key % depth10
-            if sub_factor[0] > sub_factor[1]:
-                sub_factor = (sub_factor[1], sub_factor[0])
-            for i in range(0, 10):
-                p = sub_factor[0] + i * depth
-                q = sub_factor[1]
-                pq = p * q
-
-                if pq > key:
-                    self.logging.debug(f"Breaking outer. pq greater than key. pq: {pq}; keyMod:{keyModDepth}")
-                    break
-
-                for j in range(0, 10):
-                    q = sub_factor[1] + j * depth
-                    pq = p * q
-
-                    if pq > key:
-                        self.logging.debug(f"Breaking. pq greater than key. pq: {pq}; keyMod:{keyModDepth}")
-                        break
-
-                    if pq % depth10 == keyModDepth:
-                        self.logging.debug(f"pq success:{pq}; keyMod:{keyModDepth}")
-                        stack.append((key, (p, q), depth10))
-                        break  # Break inner loop
-
-                    self.logging.debug(f"pq failure:{pq}; keyMod:{keyModDepth}")
-
-            bag.add((pkey, depth))
-
-        return None
+    start = time.time()
+    factors = get_factors(key)
+    print(factors)
+    logging.info(factors)
+    end = time.time()
+    logging.info(f"Elapsed time: {end - start}; RSA complexity: {key.bit_length()} bits")
+    print(f"Elapsed time: {end - start}; RSA complexity: {key.bit_length()} bits")
